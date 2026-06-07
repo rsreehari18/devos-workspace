@@ -1,0 +1,6 @@
+{
+  "name": "DevOS Workspace",
+  "description": "Developer Operating System with interactive Project Cockpit, Practice Log, Skill tree, AI Roadmap Generator, and senior architect blueprint.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
