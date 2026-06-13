@@ -1,7 +1,14 @@
 import React, { useState } from "react";
 import { User } from "../types";
-import { auth, googleProvider, signInWithPopup } from "../firebase";
-import { Shield, Loader2, Sparkles, AlertCircle, ArrowRight } from "lucide-react";
+import {
+  auth,
+  googleProvider,
+  signInWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification
+} from "../firebase";
+import { Shield, Loader2, Sparkles, AlertCircle, ArrowRight, Mail, Key } from "lucide-react";
 import { motion } from "motion/react";
 
 interface AuthInterfaceProps {
@@ -10,10 +17,77 @@ interface AuthInterfaceProps {
   initialMode?: "login" | "register" | "otp";
 }
 
-export default function AuthInterface({ onAuthSuccess }: AuthInterfaceProps) {
+export default function AuthInterface({ onAuthSuccess, initialMode = "login" }: AuthInterfaceProps) {
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+
+  const [mode, setMode] = useState<"login" | "register">(initialMode === "otp" ? "login" : initialMode);
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+
+  const verifyWithBackend = async (email: string, username: string, idToken: string) => {
+    // Exchange credentials with the backend server
+    const response = await fetch("/api/auth/google", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, username, idToken }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to establish verified session with backend.");
+    }
+
+    setSuccessMsg(`Session established! Welcome back, ${data.user.username}`);
+
+    // Keep local storage in sync
+    localStorage.setItem("devos_token", data.token);
+    localStorage.setItem("devos_user_raw", JSON.stringify(data.user));
+
+    // Trigger state update inside the React app
+    setTimeout(() => {
+      onAuthSuccess(data.user, data.token);
+    }, 700);
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg("");
+    setSuccessMsg("");
+    setLoading(true);
+
+    try {
+      if (!emailInput || !passwordInput) {
+        throw new Error("Email and password are required.");
+      }
+
+      if (mode === "register") {
+        const result = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
+        await sendEmailVerification(result.user);
+        setSuccessMsg("Account created! Please check your email to verify your account before logging in.");
+        setMode("login");
+        setPasswordInput("");
+      } else {
+        const result = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+        if (!result.user.emailVerified) {
+          throw new Error("Please verify your email address. Check your inbox for the verification link.");
+        }
+
+        const email = result.user.email!;
+        const username = result.user.displayName || email.split("@")[0];
+        const idToken = await result.user.getIdToken();
+
+        await verifyWithBackend(email, username, idToken);
+      }
+    } catch (err: any) {
+      console.error("Email Auth Exception:", err);
+      setErrorMsg(err.message || "An unexpected error occurred during email authentication.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleGoogleOAuth = async () => {
     setErrorMsg("");
@@ -34,28 +108,7 @@ export default function AuthInterface({ onAuthSuccess }: AuthInterfaceProps) {
       const idToken = await firebaseUser.getIdToken();
 
       // 2. Exchange credentials with the backend server
-      const response = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, username, idToken }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to establish verified session with backend.");
-      }
-
-      setSuccessMsg(`Session established! Welcome back, ${data.user.username}`);
-
-      // 3. Keep local storage in sync
-      localStorage.setItem("devos_token", data.token);
-      localStorage.setItem("devos_user_raw", JSON.stringify(data.user));
-
-      // 4. Trigger state update inside the React app
-      setTimeout(() => {
-        onAuthSuccess(data.user, data.token);
-      }, 700);
+      await verifyWithBackend(email, username, idToken);
     } catch (err: any) {
       console.error("OAuth Routine Exception:", err);
       // Handle the user cancelling the popup window gracefully
@@ -127,8 +180,71 @@ export default function AuthInterface({ onAuthSuccess }: AuthInterfaceProps) {
           </div>
         </div>
 
+        {/* Email/Password Auth Form */}
+        <form onSubmit={handleEmailAuth} className="space-y-4 pt-2">
+          <div className="space-y-3">
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Mail className="h-4 w-4 text-zinc-500" />
+              </div>
+              <input
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="developer@domain.com"
+                className="w-full pl-10 pr-4 py-2.5 bg-zinc-950/50 border border-zinc-800 focus:border-blue-500 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors font-mono"
+                required
+                disabled={loading}
+              />
+            </div>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Key className="h-4 w-4 text-zinc-500" />
+              </div>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-10 pr-4 py-2.5 bg-zinc-950/50 border border-zinc-800 focus:border-blue-500 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors font-mono"
+                required
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full relative group py-2.5 px-4 bg-blue-600 hover:bg-blue-500 border border-blue-500 hover:border-blue-400 text-xs text-white font-mono font-bold rounded-lg transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20"
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <span>{mode === "login" ? "Initialize Session" : "Register Credentials"}</span>
+            )}
+            {!loading && <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />}
+          </button>
+        </form>
+
+        <div className="flex items-center justify-center pt-2">
+          <button
+            type="button"
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+            className="text-[10px] text-zinc-500 hover:text-blue-400 font-mono tracking-wide transition-colors cursor-pointer"
+          >
+            {mode === "login" ? "Need credentials? Register new identity" : "Already registered? Initialize session"}
+          </button>
+        </div>
+
+        <div className="relative flex items-center py-2">
+          <div className="flex-grow border-t border-zinc-800"></div>
+          <span className="flex-shrink-0 mx-4 text-zinc-600 text-[10px] font-mono tracking-widest uppercase">Or</span>
+          <div className="flex-grow border-t border-zinc-800"></div>
+        </div>
+
         {/* Interactive Google OAuth Button */}
-        <div className="pt-2">
+        <div>
           <button
             type="button"
             onClick={handleGoogleOAuth}
